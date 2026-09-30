@@ -145,7 +145,57 @@ export function splitChapters(text) {
 }
 
 /* ============================================================
- * 3. 从文本里猜书名 / 作者
+ * 3. 语音片段切分（听书用）
+ * ============================================================ */
+
+/**
+ * 把章节正文切成适合语音合成的片段（每段约 40~220 字）。
+ * 优先在句末标点处断开；单句过长时硬切。返回 string[]。
+ */
+export function segmentText(content) {
+  const normalized = String(content || "").replace(/\r\n?/g, "\n");
+  const paras = normalized
+    .split(/\n+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+
+  const MAX = 220;
+  const MIN = 40;
+  const segments = [];
+  let buf = "";
+  const flush = () => {
+    const t = buf.trim();
+    if (t) segments.push(t);
+    buf = "";
+  };
+
+  for (const para of paras) {
+    const sentences = para.match(/[^。！？!?；;…]+[。！？!?；;…]*/g) || [para];
+    for (let s of sentences) {
+      s = s.trim();
+      if (!s) continue;
+      while (s.length > MAX) {
+        if (buf) flush();
+        segments.push(s.slice(0, MAX));
+        s = s.slice(MAX);
+      }
+      if (buf && (buf + s).length > MAX) flush();
+      buf += s;
+      if (buf.length >= MAX) flush();
+    }
+    if (buf.length >= MIN) flush();
+  }
+  flush();
+
+  if (!segments.length) {
+    const t = normalized.trim();
+    return t ? [t.slice(0, MAX)] : [];
+  }
+  return segments;
+}
+
+/* ============================================================
+ * 4. 从文本里猜书名 / 作者
  * ============================================================ */
 
 export function guessMeta(text, fallbackName) {
@@ -169,7 +219,7 @@ export function guessMeta(text, fallbackName) {
 }
 
 /* ============================================================
- * 4. EPUB 解析（内置极简 ZIP 读取，零依赖）
+ * 5. EPUB 解析（内置极简 ZIP 读取，零依赖）
  * ============================================================ */
 
 const EOCD_SIG = 0x06054b50;

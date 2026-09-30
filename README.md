@@ -9,7 +9,8 @@
 - **书架**：封面墙式书格，显示章节数、字数、读到第几章；支持拖动上传、重命名、删除
 - **阅读器**：自动切分章节、目录跳转、上一章/下一章、键盘翻页、手机左右滑动翻页
 - **阅读体验**：4 套配色（纸黄/牛皮/护眼绿/夜间）、字号与行距调节（本地记忆）
-- **进度记忆**：自动记录读到第几章第几屏，下次点开直接续读
+- **🎧 听书**：微软 Edge 神经语音（晓晓/云希/云扬/云健… 14 种音色），支持语速调节、自动连播下一段/下一章、锁屏媒体控制；合成结果自动缓存，重复收听秒开；进度独立记忆
+- **进度记忆**：自动记录读到第几章第几屏、听到第几段，下次点开直接续读/续听
 - **书签**：随手标记当前阅读位置
 - **登录**：Cookie 会话，scrypt 密码哈希（无原生依赖）
 - **手机适配**：安全区适配、可「添加到主屏幕」（PWA）
@@ -17,6 +18,7 @@
 ## 技术栈
 
 - 后端：**Node 24 内置 `node:sqlite`（零原生依赖）** + Fastify 5 + `@fastify/multipart`
+- 听书：Node 内置 `WebSocket` 直连微软 Edge 在线语音（`server/src/tts.js`），**无需额外依赖/密钥**
 - 前端：React 19 + Vite 6 + 原生 CSS（无 UI 框架）
 - 单容器单端口（容器内 4000），数据落 SQLite + 本地文件
 
@@ -40,8 +42,12 @@ cd ../server && npm start                      # 访问 http://localhost:4000
 node tests/api-smoke.mjs      # 后端接口：登录/上传(GBK)/书架/阅读/进度/去重/删书清盘（23 项）
 node tests/epub-test.mjs      # EPUB 解析：书名/作者/章节/封面（7 项）
 cd web && npm run build && cd ..
-node tests/integration.mjs    # 静态资源 + SPA 深链接 + 全链路（8 项）
+node tests/integration.mjs    # 静态资源 + SPA 深链接 + 全链路（14 项）
+node tests/tts-test.mjs       # 听书：音色列表/合成 MP3/缓存命中/换声变速（10 项，需外网）
+node tests/ui-smoke.mjs       # 前端产物 + 听书接口 + 听书进度（17 项）
 ```
+
+> 听书依赖微软在线语音服务，需服务器可访问 `speech.platform.bing.com`（国内多数服务器可直连）。
 
 ## 部署
 
@@ -62,7 +68,8 @@ book/
 │   │   ├── index.js        # Fastify 入口（挂路由 + 托管前端）
 │   │   ├── db.js           # node:sqlite 建表 / scrypt 密码 / 初始账号
 │   │   ├── auth.js         # 会话与鉴权
-│   │   ├── parser.js       # 编码识别 + 章节切分 + EPUB 解析
+│   │   ├── parser.js       # 编码识别 + 章节切分 + EPUB 解析 + 语音分段
+│   │   ├── tts.js          # 听书：Edge 在线语音合成 + 磁盘缓存
 │   │   ├── storage.js      # 删书清盘
 │   │   └── routes/         # auth.js / books.js
 │   └── package.json

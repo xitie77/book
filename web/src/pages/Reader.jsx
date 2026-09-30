@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api } from "../api.js";
 import { toast } from "../components/Toast.jsx";
+import ListeningPanel from "../components/ListeningPanel.jsx";
+import { usePlayer } from "../usePlayer.js";
 
 const READER_THEMES = {
   paper: { bg: "#f7f3e9", text: "#333029" },
@@ -36,6 +38,15 @@ export default function Reader() {
   const [fontSize, setFontSize] = useState(pref.fontSize || 19);
   const [leading, setLeading] = useState(pref.leading || 1.9);
 
+  /* 听书 */
+  const [voice, setVoice] = useState(pref.voice || "zh-CN-XiaoxiaoNeural");
+  const [rate, setRate] = useState(pref.rate ?? 0);
+  const [showPlayer, setShowPlayer] = useState(false);
+  const [listenMeta, setListenMeta] = useState(null);
+  const ttsRef = useRef(null);        // 上次收听位置（来自接口）
+  const startedRef = useRef(false);   // 本次阅读是否已启动听书
+  const curChapterRef = useRef(null); // 当前正文章号
+
   const scrollRef = useRef(0);
   const restoreRef = useRef(null); // 待恢复的滚动比例
   const cache = useRef(new Map()); // idx -> chapter 数据
@@ -43,8 +54,11 @@ export default function Reader() {
 
   /* 保存偏好 */
   useEffect(() => {
-    localStorage.setItem("book-reader-pref", JSON.stringify({ theme, fontSize, leading }));
-  }, [theme, fontSize, leading]);
+    localStorage.setItem(
+      "book-reader-pref",
+      JSON.stringify({ theme, fontSize, leading, voice, rate })
+    );
+  }, [theme, fontSize, leading, voice, rate]);
 
   /* 初始加载：书信息 + 目录 + 进度 */
   useEffect(() => {
@@ -58,6 +72,7 @@ export default function Reader() {
         setTotal(d.chapters.length);
         const startIdx = d.progress?.chapterIdx || d.chapters[0]?.idx || 1;
         restoreRef.current = d.progress?.chapterIdx === startIdx ? d.progress.scrollPct : 0;
+        ttsRef.current = d.ttsProgress || null;
         await openChapter(startIdx, false);
       } catch (e) {
         toast(e.message || "加载失败");
@@ -80,6 +95,7 @@ export default function Reader() {
           cache.current.set(idx, data);
         }
         setChapter(data.chapter);
+        curChapterRef.current = data.chapter.idx;
         setPrevIdx(data.prevIdx);
         setNextIdx(data.nextIdx);
         setTotal(data.total);
@@ -107,6 +123,38 @@ export default function Reader() {
     },
     [id]
   );
+
+  /* ---------- 听书播放器 ---------- */
+  const player = usePlayer({
+    bookId: id,
+    voice,
+    rate,
+    onPos: ({ chapterIdx, segIdx }) => {
+      api.put(`/api/books/${id}/tts-progress`, { chapterIdx, segIdx }).catch(() => {});
+    },
+    onError: (m) => toast(m),
+    onChapter: ({ chapterIdx, title }) => {
+      setListenMeta({ title, chapterIdx });
+      // 朗读推进到新章节时，正文跟着翻过去
+      if (curChapterRef.current != null && curChapterRef.current !== chapterIdx) {
+        openChapter(chapterIdx, true);
+      }
+    },
+  });
+
+  /* 点听力图标：首次启动播放；之后仅开合面板 */
+  const onListenClick = () => {
+    setShowTools(false);
+    setShowToc(false);
+    if (!startedRef.current) {
+      startedRef.current = true;
+      player.prime();
+      const startCh = ttsRef.current?.chapterIdx || chapter?.idx || 1;
+      const startSeg = ttsRef.current?.segIdx || 0;
+      player.playAt(startCh, startSeg);
+    }
+    setShowPlayer((v) => !v);
+  };
 
   /* 滚动保存进度（节流） */
   useEffect(() => {
@@ -204,9 +252,18 @@ export default function Reader() {
           </button>
           <div className="ct">{book?.title}</div>
           <div className="spacer" />
-          <button className="icon-btn" onClick={addBookmark}>
-            🔖
-          </button>
+          <div className="reader-head-actions">
+            <button
+              className={"icon-btn" + (showPlayer ? " on" : "")}
+              onClick={onListenClick}
+              title="听书"
+            >
+              🎧
+            </button>
+            <button className="icon-btn" onClick={addBookmark} title="加书签">
+              🔖
+            </button>
+          </div>
         </div>
       </div>
 
@@ -250,6 +307,9 @@ export default function Reader() {
 
       {/* 底部工具条 */}
       <div className={"reader-tools" + (showTools ? " show" : "")}>
+        <button className="btn" style={{ width: "100%", marginBottom: 14 }} onClick={onListenClick}>
+          🎧 听这本书
+        </button>
         <div className="tool-themes">
           {Object.entries(READER_THEMES).map(([k, v]) => (
             <button
@@ -333,6 +393,18 @@ export default function Reader() {
           </div>
         </>
       )}
+
+      {/* 听书面板 */}
+      <ListeningPanel
+        player={player}
+        voice={voice}
+        setVoice={setVoice}
+        rate={rate}
+        setRate={setRate}
+        meta={listenMeta}
+        open={showPlayer}
+        onClose={() => setShowPlayer(false)}
+      />
     </div>
   );
 }

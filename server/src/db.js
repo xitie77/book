@@ -55,6 +55,9 @@ db.exec(`
     book_id     INTEGER NOT NULL REFERENCES books(id) ON DELETE CASCADE,
     chapter_idx INTEGER NOT NULL DEFAULT 1,
     scroll_pct  REAL NOT NULL DEFAULT 0,
+    tts_chapter INTEGER NOT NULL DEFAULT 1,   -- 听书：第几章
+    tts_seg     INTEGER NOT NULL DEFAULT 0,   -- 听书：第几段
+    tts_updated_at TEXT,
     updated_at  TEXT NOT NULL DEFAULT (datetime('now','localtime')),
     PRIMARY KEY (user_id, book_id)
   );
@@ -72,8 +75,18 @@ db.exec(`
   CREATE INDEX IF NOT EXISTS idx_bookmarks ON bookmarks(user_id, book_id, chapter_idx);
 `);
 
-/* ---------- 密码：内置 scrypt，零原生依赖 ---------- */
+/* ---------- 轻量迁移：给旧的 progress 表补听书字段 ---------- */
+{
+  const cols = db.prepare("PRAGMA table_info(progress)").all().map((c) => c.name);
+  const add = (name, ddl) => {
+    if (!cols.includes(name)) db.exec(`ALTER TABLE progress ADD COLUMN ${ddl}`);
+  };
+  add("tts_chapter", "tts_chapter INTEGER NOT NULL DEFAULT 1");
+  add("tts_seg", "tts_seg INTEGER NOT NULL DEFAULT 0");
+  add("tts_updated_at", "tts_updated_at TEXT");
+}
 
+/* ---------- 密码：内置 scrypt，零原生依赖 ---------- */
 export function hashPassword(plain) {
   const salt = randomBytes(16).toString("hex");
   const derived = scryptSync(String(plain), salt, 64).toString("hex");

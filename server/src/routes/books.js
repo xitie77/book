@@ -5,8 +5,9 @@ import { pipeline } from "node:stream/promises";
 import { db } from "../db.js";
 import { requireAuth } from "../auth.js";
 import { BOOKS_DIR, COVERS_DIR } from "../paths.js";
-import { decodeBuffer, splitChapters, guessMeta, parseEpub } from "../parser.js";
+import { decodeBuffer, splitChapters, guessMeta, parseEpub, segmentText } from "../parser.js";
 import { removeBookFiles, safeExt } from "../storage.js";
+import { VOICES, synthesize } from "../tts.js";
 
 const MAX_UPLOAD_MB = Number(process.env.MAX_UPLOAD_MB || 50);
 
@@ -179,7 +180,9 @@ export default async function bookRoutes(app) {
       .prepare("SELECT idx, title FROM chapters WHERE book_id = ? ORDER BY idx")
       .all(book.id);
     const prog = db
-      .prepare("SELECT chapter_idx, scroll_pct FROM progress WHERE user_id = ? AND book_id = ?")
+      .prepare(
+        "SELECT chapter_idx, scroll_pct, tts_chapter, tts_seg FROM progress WHERE user_id = ? AND book_id = ?"
+      )
       .get(request.user.id, book.id);
     return {
       book: {
@@ -193,6 +196,7 @@ export default async function bookRoutes(app) {
       },
       chapters,
       progress: prog ? { chapterIdx: prog.chapter_idx, scrollPct: prog.scroll_pct } : null,
+      ttsProgress: prog ? { chapterIdx: prog.tts_chapter, segIdx: prog.tts_seg } : null,
     };
   });
 
@@ -209,6 +213,7 @@ export default async function bookRoutes(app) {
     const cur = rows[pos];
     return {
       chapter: { idx: cur.idx, title: cur.title, content: cur.content },
+      segmentCount: segmentText(cur.content).length,
       prevIdx: pos > 0 ? rows[pos - 1].idx : null,
       nextIdx: pos < rows.length - 1 ? rows[pos + 1].idx : null,
       total: rows.length,
@@ -268,6 +273,23 @@ export default async function bookRoutes(app) {
     return { ok: true };
   });
 
+  /* ---------- 听书进度（只动 tts_* 字段） ---------- */
+  app.put("/api/books/:id/tts-progress", { preHandler: requireAuth }, async (request, reply) => {
+    const book = ownedBook(request.params.id, request.user.id);
+    if (!book) return reply.code(404).send({ error: "书不存在" });
+    const ttsChapter = Math.max(1, Number(request.body?.chapterIdx) || 1);
+    const ttsSeg = Math.max(0, Number(request.body?.segIdx) || 0);
+    db.prepare(
+      `INSERT INTO progress (user_id, book_id, tts_chapter, tts_seg, tts_updated_at)
+       VALUES (?, ?, ?, ?, datetime('now','localtime'))
+       ON CONFLICT(user_id, book_id) DO UPDATE SET
+         tts_chapter = excluded.tts_chapter,
+         tts_seg     = excluded.tts_seg,
+         tts_updated_at = excluded.tts_updated_at`
+    ).run(request.user.id, book.id, ttsChapter, ttsSeg);
+    return { ok: true };
+  });
+
   /* ---------- 书签 ---------- */
   app.get("/api/books/:id/bookmarks", { preHandler: requireAuth }, async (request, reply) => {
     const book = ownedBook(request.params.id, request.user.id);
@@ -304,5 +326,40 @@ export default async function bookRoutes(app) {
       book.id
     );
     return { ok: true };
+  });
+
+  /* ---------- 听书：音色列表 ---------- */
+  app.get("/api/voices", { preHandler: requireAuth }, async () => ({ voices: VOICES }));
+
+  /* ---------- 听书：合成一个语音片段 ---------- */
+  app.get("/api/books/:id/tts", { preHandler: requireAuth }, async (request, reply) => {
+    const book = ownedBook(request.params.id, request.user.id);
+    if (!book) return reply.code(404).send({ error: "书不存在" });
+
+    const chapterIdx = Math.max(1, Number(request.query.chapter) || 1);
+    const segIdx = Math.max(0, Number(request.query.seg) || 0);
+    const voice = String(request.query.voice || VOICES[0].id);
+    const rate = Number(request.query.rate ?? 0);
+    const pitch = Number(request.query.pitch ?? 0);
+
+    const row = db
+      .prepare("SELECT content FROM chapters WHERE book_id = ? AND idx = ?")
+      .get(book.id, chapterIdx);
+    if (!row) return reply.code(404).send({ error: "章节不存在" });
+
+    const segments = segmentText(row.content);
+    if (segIdx >= segments.length) return reply.code(404).send({ error: "片段不存在" });
+
+    try {
+      const { buffer, key } = await synthesize(segments[segIdx], { voice, rate, pitch });
+      reply
+        .header("Content-Type", "audio/mpeg")
+        .header("Cache-Control", "private, max-age=604800")
+        .header("X-Tts-Key", key);
+      return reply.send(buffer);
+    } catch (err) {
+      request.log.error(err);
+      return reply.code(502).send({ error: "语音合成失败：" + (err?.message || "未知错误") });
+    }
   });
 }

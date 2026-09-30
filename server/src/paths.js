@@ -11,8 +11,10 @@ export const DATA_DIR = process.env.DATA_DIR
 
 export const BOOKS_DIR = path.join(DATA_DIR, "books");   // 原始 txt / epub
 export const COVERS_DIR = path.join(DATA_DIR, "covers"); // 封面
+export const TTS_DIR = path.join(DATA_DIR, "tts");       // 听书合成缓存
+
 export const DB_PATH = path.join(DATA_DIR, "app.db");
 
-for (const dir of [DATA_DIR, BOOKS_DIR, COVERS_DIR]) {
+for (const dir of [DATA_DIR, BOOKS_DIR, COVERS_DIR, TTS_DIR]) {
   fs.mkdirSync(dir, { recursive: true });
 }
