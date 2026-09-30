@@ -22,25 +22,32 @@ const WIN_EPOCH = 11644473600;
 
 const UA = `Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/${CHROMIUM_MAJOR}.0.0.0 Safari/537.36 Edg/${CHROMIUM_MAJOR}.0.0.0`;
 
-/** 精选音色（默认可选这些；其余 zh-CN 音色也可用 voice 参数直传） */
+/**
+ * 精选音色。
+ * 仅收录【Edge 免费频道真实存在】的音色（经实测合成验证）。
+ * 注意：晓辰/晓涵/晓梦/晓萱/云枫/云皓/云泽等属于 Azure 付费 API 的“多风格音色”，
+ *       Edge 频道并不存在，填入会得到 403/连接关闭 => 前端报“语音合成失败”。
+ */
 export const VOICES = [
-  { id: "zh-CN-XiaoxiaoNeural", name: "晓晓", gender: "女", style: "温柔亲和", tag: "推荐" },
-  { id: "zh-CN-XiaoyiNeural", name: "晓伊", gender: "女", style: "甜美俏皮", tag: "" },
-  { id: "zh-CN-XiaochenNeural", name: "晓辰", gender: "女", style: "沉稳叙述", tag: "听书" },
-  { id: "zh-CN-XiaohanNeural", name: "晓涵", gender: "女", style: "知性优雅", tag: "" },
-  { id: "zh-CN-XiaomengNeural", name: "晓梦", gender: "女", style: "慵懒柔和", tag: "" },
-  { id: "zh-CN-XiaoxuanNeural", name: "晓萱", gender: "女", style: "清亮活泼", tag: "" },
-  { id: "zh-CN-YunxiNeural", name: "云希", gender: "男", style: "阳光少年", tag: "推荐" },
-  { id: "zh-CN-YunyangNeural", name: "云扬", gender: "男", style: "专业播报", tag: "听书" },
-  { id: "zh-CN-YunjianNeural", name: "云健", gender: "男", style: "磁性有力", tag: "" },
-  { id: "zh-CN-YunfengNeural", name: "云枫", gender: "男", style: "低沉浑厚", tag: "" },
-  { id: "zh-CN-YunhaoNeural", name: "云皓", gender: "男", style: "清晰稳重", tag: "" },
-  { id: "zh-CN-YunzeNeural", name: "云泽", gender: "男", style: "醇厚叙事", tag: "" },
-  { id: "zh-CN-liaoning-XiaobeiNeural", name: "晓北", gender: "女", style: "东北口音", tag: "" },
-  { id: "zh-CN-shaanxi-XiaoniNeural", name: "晓妮", gender: "女", style: "陕西口音", tag: "" },
+  { id: "zh-CN-XiaoxiaoNeural", name: "晓晓", gender: "女", accent: "普通话", style: "温暖亲和", tag: "推荐" },
+  { id: "zh-CN-XiaoyiNeural", name: "晓伊", gender: "女", accent: "普通话", style: "活泼甜美", tag: "" },
+  { id: "zh-CN-YunxiNeural", name: "云希", gender: "男", accent: "普通话", style: "阳光少年", tag: "推荐" },
+  { id: "zh-CN-YunyangNeural", name: "云扬", gender: "男", accent: "普通话", style: "专业播报", tag: "听书" },
+  { id: "zh-CN-YunjianNeural", name: "云健", gender: "男", accent: "普通话", style: "磁性有力", tag: "" },
+  { id: "zh-CN-YunxiaNeural", name: "云夏", gender: "男", accent: "普通话", style: "清亮可爱", tag: "" },
+  { id: "zh-CN-liaoning-XiaobeiNeural", name: "晓北", gender: "女", accent: "东北话", style: "幽默爽快", tag: "" },
+  { id: "zh-CN-shaanxi-XiaoniNeural", name: "晓妮", gender: "女", accent: "陕西话", style: "明亮俏皮", tag: "" },
+  { id: "zh-TW-HsiaoChenNeural", name: "晓臻", gender: "女", accent: "台湾", style: "温柔", tag: "" },
+  { id: "zh-TW-HsiaoYuNeural", name: "晓雨", gender: "女", accent: "台湾", style: "甜软", tag: "" },
+  { id: "zh-TW-YunJheNeural", name: "云哲", gender: "男", accent: "台湾", style: "沉稳", tag: "" },
+  { id: "zh-HK-HiuGaaiNeural", name: "晓佳", gender: "女", accent: "粤语", style: "亲切", tag: "" },
+  { id: "zh-HK-HiuMaanNeural", name: "晓曼", gender: "女", accent: "粤语", style: "温婉", tag: "" },
+  { id: "zh-HK-WanLungNeural", name: "云龙", gender: "男", accent: "粤语", style: "浑厚", tag: "" },
 ];
 
 const VOICE_IDS = new Set(VOICES.map((v) => v.id));
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 /* ---------- Sec-MS-GEC 令牌 ---------- */
 function secMsGec() {
@@ -184,7 +191,7 @@ export async function synthesize(text, { voice, rate, pitch } = {}) {
   if (!clean) throw new Error("文本为空");
   if (clean.length > 4000) throw new Error("单段文本过长（上限 4000 字）");
 
-  const v = VOICE_IDS.has(voice) || /^zh-CN-[A-Za-z]+Neural$/.test(voice) ? voice : VOICES[0].id;
+  const v = VOICE_IDS.has(voice) || /^[a-z]{2}-[A-Za-z0-9-]*Neural$/.test(voice) ? voice : VOICES[0].id;
   const r = clampRate(rate);
   const p = clampPitch(pitch);
 
@@ -192,11 +199,28 @@ export async function synthesize(text, { voice, rate, pitch } = {}) {
   const file = path.join(TTS_DIR, `${key}.mp3`);
   if (fs.existsSync(file)) return { buffer: fs.readFileSync(file), cached: true, key };
 
-  const buffer = await synthOnce(clean, v, r, p);
+  const buffer = await synthOnceWithRetry(clean, v, r, p);
   try {
     fs.writeFileSync(file, buffer);
   } catch {}
   return { buffer, cached: false, key };
+}
+
+/**
+ * 带重试的合成。
+ * 微软语音服务偶发连接被提前关闭（ws error / closed 1007），重试 2 次可基本消除偶发失败。
+ */
+async function synthOnceWithRetry(text, voice, rate, pitch) {
+  let lastErr = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      return await synthOnce(text, voice, rate, pitch);
+    } catch (err) {
+      lastErr = err;
+      if (attempt < 2) await sleep(300 * (attempt + 1));
+    }
+  }
+  throw lastErr || new Error("合成失败");
 }
 
 export const voiceId = (id) => VOICES.find((v) => v.id === id);

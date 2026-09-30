@@ -41,6 +41,7 @@ export default function Reader() {
   /* 听书 */
   const [voice, setVoice] = useState(pref.voice || "zh-CN-XiaoxiaoNeural");
   const [rate, setRate] = useState(pref.rate ?? 0);
+  const [pitch, setPitch] = useState(pref.pitch ?? 0);
   const [showPlayer, setShowPlayer] = useState(false);
   const [listenMeta, setListenMeta] = useState(null);
   const ttsRef = useRef(null);        // 上次收听位置（来自接口）
@@ -56,9 +57,9 @@ export default function Reader() {
   useEffect(() => {
     localStorage.setItem(
       "book-reader-pref",
-      JSON.stringify({ theme, fontSize, leading, voice, rate })
+      JSON.stringify({ theme, fontSize, leading, voice, rate, pitch })
     );
-  }, [theme, fontSize, leading, voice, rate]);
+  }, [theme, fontSize, leading, voice, rate, pitch]);
 
   /* 初始加载：书信息 + 目录 + 进度 */
   useEffect(() => {
@@ -129,6 +130,7 @@ export default function Reader() {
     bookId: id,
     voice,
     rate,
+    pitch,
     onPos: ({ chapterIdx, segIdx }) => {
       api.put(`/api/books/${id}/tts-progress`, { chapterIdx, segIdx }).catch(() => {});
     },
@@ -401,6 +403,8 @@ export default function Reader() {
         setVoice={setVoice}
         rate={rate}
         setRate={setRate}
+        pitch={pitch}
+        setPitch={setPitch}
         meta={listenMeta}
         open={showPlayer}
         onClose={() => setShowPlayer(false)}

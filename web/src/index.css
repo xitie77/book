@@ -717,6 +717,12 @@ input[type="range"]::-webkit-slider-thumb {
   color: #fff;
   vertical-align: middle;
 }
+.vacc {
+  margin-left: 5px;
+  font-size: 10px;
+  color: var(--muted, #888);
+  vertical-align: middle;
+}
 .rate-row {
   display: flex;
   gap: 8px;

@@ -4,7 +4,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from "react";
 
-export function usePlayer({ bookId, voice, rate, onPos, onError, onChapter }) {
+export function usePlayer({ bookId, voice, rate, pitch, onPos, onError, onChapter }) {
   const audioRef = useRef(null);
   const [playing, setPlaying] = useState(false);
   const [loading, setLoading] = useState(false);
@@ -19,22 +19,31 @@ export function usePlayer({ bookId, voice, rate, onPos, onError, onChapter }) {
   const urlRef = useRef("");           // 当前 objectURL
   const voiceRef = useRef(voice);
   const rateRef = useRef(rate);
+  const pitchRef = useRef(pitch);
   const onPosRef = useRef(onPos);
   const onErrorRef = useRef(onError);
   const onChapterRef = useRef(onChapter);
   voiceRef.current = voice;
   rateRef.current = rate;
+  pitchRef.current = pitch;
   onPosRef.current = onPos;
   onErrorRef.current = onError;
   onChapterRef.current = onChapter;
 
-  const ttsFetch = (ch, seg) =>
-    fetch(
-      `/api/books/${bookId}/tts?chapter=${ch}&seg=${seg}&voice=${encodeURIComponent(
-        voiceRef.current
-      )}&rate=${rateRef.current}`,
+  /**
+   * 取一段合成音频。
+   * 显式传 opts 是关键：切音色/语速后立刻重播时，voiceRef 要等 React 重渲染才更新，
+   * 若只用 ref，会拿【旧音色】去合成 => 用户看到“换了没反应/都是一个调”。
+   */
+  const ttsFetch = (ch, seg, opts = {}) => {
+    const v = opts.voice ?? voiceRef.current;
+    const r = opts.rate ?? rateRef.current;
+    const p = opts.pitch ?? pitchRef.current;
+    return fetch(
+      `/api/books/${bookId}/tts?chapter=${ch}&seg=${seg}&voice=${encodeURIComponent(v)}&rate=${r}&pitch=${p}`,
       { credentials: "same-origin" }
     );
+  };
 
   const getMeta = useCallback(
     async (chapterIdx) => {
@@ -77,7 +86,7 @@ export function usePlayer({ bookId, voice, rate, onPos, onError, onChapter }) {
   }, []);
 
   const prefetch = useCallback(
-    (m, ch, seg) => {
+    (m, ch, seg, opts = {}) => {
       let nch = ch;
       let nseg = seg + 1;
       if (nseg >= m.segCount) {
@@ -85,12 +94,12 @@ export function usePlayer({ bookId, voice, rate, onPos, onError, onChapter }) {
         nch = m.nextIdx;
         nseg = 0;
       }
-      const key = `${nch}:${nseg}:${voiceRef.current}:${rateRef.current}`;
-      if (prefetchRef.current.key === key || urlRef.current === "") {
-        // 注意：urlRef 非空说明正在播放，允许预取
-      }
-      ttsFetch(nch, nseg)
-        .then((r) => (r.ok ? r.blob() : null))
+      const v = opts.voice ?? voiceRef.current;
+      const r = opts.rate ?? rateRef.current;
+      const p = opts.pitch ?? pitchRef.current;
+      const key = `${nch}:${nseg}:${v}:${r}:${p}`;
+      ttsFetch(nch, nseg, { voice: v, rate: r, pitch: p })
+        .then((r2) => (r2.ok ? r2.blob() : null))
         .then((b) => {
           if (b) prefetchRef.current = { key, url: URL.createObjectURL(b) };
         })
@@ -100,10 +109,13 @@ export function usePlayer({ bookId, voice, rate, onPos, onError, onChapter }) {
   );
 
   const playAt = useCallback(
-    async (ch, seg) => {
+    async (ch, seg, opts = {}) => {
       const token = ++tokenRef.current;
       setLoading(true);
       try {
+        const v = opts.voice ?? voiceRef.current;
+        const r = opts.rate ?? rateRef.current;
+        const p = opts.pitch ?? pitchRef.current;
         let meta = await getMeta(ch);
         if (token !== tokenRef.current) return;
 
@@ -127,13 +139,13 @@ export function usePlayer({ bookId, voice, rate, onPos, onError, onChapter }) {
         onPosRef.current?.({ chapterIdx, segIdx });
         onChapterRef.current?.({ chapterIdx, title: meta.title });
 
-        const key = `${chapterIdx}:${segIdx}:${voiceRef.current}:${rateRef.current}`;
+        const key = `${chapterIdx}:${segIdx}:${v}:${r}:${p}`;
         let objUrl;
         if (prefetchRef.current.key === key && prefetchRef.current.url) {
           objUrl = prefetchRef.current.url;
           prefetchRef.current = { key: "", url: "" };
         } else {
-          const res = await ttsFetch(chapterIdx, segIdx);
+          const res = await ttsFetch(chapterIdx, segIdx, { voice: v, rate: r, pitch: p });
           if (token !== tokenRef.current) return;
           if (!res.ok) {
             throw new Error(
@@ -161,7 +173,7 @@ export function usePlayer({ bookId, voice, rate, onPos, onError, onChapter }) {
           }
         }
         setLoading(false);
-        prefetch(meta, chapterIdx, segIdx);
+        prefetch(meta, chapterIdx, segIdx, { voice: v, rate: r, pitch: p });
       } catch (e) {
         if (token !== tokenRef.current) return;
         setLoading(false);

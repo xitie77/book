@@ -6,10 +6,16 @@ import { api } from "../api.js";
 import { toast } from "../components/Toast.jsx";
 
 const RATE_PRESETS = [
+  { v: -20, label: "0.8x" },
   { v: 0, label: "1.0x" },
   { v: 20, label: "1.2x" },
   { v: 40, label: "1.4x" },
-  { v: -20, label: "0.8x" },
+];
+
+const PITCH_PRESETS = [
+  { v: -8, label: "低" },
+  { v: 0, label: "标准" },
+  { v: 8, label: "高" },
 ];
 
 function fmtChars(n) {
@@ -17,7 +23,7 @@ function fmtChars(n) {
   return n >= 10000 ? (n / 10000).toFixed(1) + " 万字" : n + " 字";
 }
 
-export default function ListeningPanel({ player, voice, setVoice, rate, setRate, meta, open, onClose }) {
+export default function ListeningPanel({ player, voice, setVoice, rate, setRate, pitch, setPitch, meta, open, onClose }) {
   const [voices, setVoices] = useState([]);
 
   useEffect(() => {
@@ -39,7 +45,8 @@ export default function ListeningPanel({ player, voice, setVoice, rate, setRate,
 
   const pickVoice = (id) => {
     setVoice(id);
-    if (playing) player.playAt(pos.chapterIdx, pos.segIdx);
+    // 显式传 voice：setState 要等重渲染才生效，直接传才能立即用新音色重合成
+    if (playing) player.playAt(pos.chapterIdx, pos.segIdx, { voice: id });
   };
 
   return (
@@ -83,9 +90,12 @@ export default function ListeningPanel({ player, voice, setVoice, rate, setRate,
                       key={v.id}
                       className={"voice-chip" + (v.id === voice ? " active" : "")}
                       onClick={() => pickVoice(v.id)}
-                      title={v.style}
+                      title={`${v.accent || ""} · ${v.style || ""}`}
                     >
                       {v.name}
+                      {v.accent && v.accent !== "普通话" ? (
+                        <span className="vacc">{v.accent}</span>
+                      ) : null}
                       {v.tag ? <span className="vtag">{v.tag}</span> : null}
                     </button>
                   ))}
@@ -105,10 +115,28 @@ export default function ListeningPanel({ player, voice, setVoice, rate, setRate,
               className={"rate-chip" + (rate === r.v ? " active" : "")}
               onClick={() => {
                 setRate(r.v);
-                if (playing) player.playAt(pos.chapterIdx, pos.segIdx);
+                if (playing) player.playAt(pos.chapterIdx, pos.segIdx, { rate: r.v });
               }}
             >
               {r.label}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div className="player-sec">
+        <label>音调</label>
+        <div className="rate-row">
+          {PITCH_PRESETS.map((p) => (
+            <button
+              key={p.v}
+              className={"rate-chip" + (pitch === p.v ? " active" : "")}
+              onClick={() => {
+                setPitch(p.v);
+                if (playing) player.playAt(pos.chapterIdx, pos.segIdx, { pitch: p.v });
+              }}
+            >
+              {p.label}
             </button>
           ))}
         </div>
