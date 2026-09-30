@@ -32,17 +32,21 @@ export function decodeBuffer(buf) {
     return iconv.decode(swapped, "utf16le");
   }
 
-  // 严格 UTF-8 判定
+  // 合法 UTF-8 直接采用：UTF-8 是自校验编码，通过严格校验即确信。
+  // （不能用「汉字多者胜」来比：GB18030 是双字节密集编码，拿它硬解 UTF-8 会产生大量
+  //   “看着像汉字”的乱码，评分反而高于正确的 UTF-8，会把整本中文解成乱码。）
   const strict = new TextDecoder("utf-8", { fatal: true });
-  const candidates = [];
   try {
-    candidates.push({ name: "utf8", text: strict.decode(buf) });
+    return strict.decode(buf);
   } catch {
-    /* 不是合法 UTF-8 */
+    /* 非 UTF-8，再试简体 / 繁体 */
   }
+
+  // 非 UTF-8：在 GB18030 与 Big5 之间取更干净的一个（评分平手时优先 GB18030）
+  const candidates = [];
   for (const enc of ["gb18030", "big5"]) {
     try {
-      candidates.push({ name: enc, text: iconv.decode(buf, enc) });
+      candidates.push(iconv.decode(buf, enc));
     } catch {
       /* ignore */
     }
@@ -50,15 +54,15 @@ export function decodeBuffer(buf) {
   if (!candidates.length) return buf.toString("utf8");
 
   let best = candidates[0];
-  let bestScore = scoreText(best.text);
+  let bestScore = scoreText(best);
   for (const c of candidates.slice(1)) {
-    const s = scoreText(c.text);
+    const s = scoreText(c);
     if (s > bestScore) {
       best = c;
       bestScore = s;
     }
   }
-  return best.text;
+  return best;
 }
 
 /* ============================================================
@@ -78,9 +82,11 @@ const CHAPTER_RE = new RegExp(
 
 /** 是否像章节标题（限制长度且不含句子标点，避免把正文误判成标题） */
 function isChapterTitle(line) {
-  const t = line.trim();
-  if (!t || t.length > 40) return false;
+  let t = line.replace(/^\uFEFF/, "").trim();
+  if (!t || t.length > 50) return false;
   if (/[。！？；，、：…]/.test(t)) return false;
+  // 全角数字转半角后匹配
+  t = t.replace(/[０-９]/g, (d) => String.fromCharCode(d.charCodeAt(0) - 0xfee0));
   return CHAPTER_RE.test(t);
 }
 

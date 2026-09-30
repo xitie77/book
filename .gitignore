@@ -4,4 +4,5 @@ data/
 .env
 .deploy.env
 *.log
+samples/
 .DS_Store

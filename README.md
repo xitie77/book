@@ -45,6 +45,7 @@ cd web && npm run build && cd ..
 node tests/integration.mjs    # 静态资源 + SPA 深链接 + 全链路（14 项）
 node tests/tts-test.mjs       # 听书：音色列表/合成 MP3/缓存命中/换声变速（10 项，需外网）
 node tests/ui-smoke.mjs       # 前端产物 + 听书接口 + 听书进度（17 项）
+node tests/encoding-test.mjs  # 编码识别：UTF-8/BOM/UTF-16/GB18030/Big5 + 切章（7 项）
 ```
 
 > 听书依赖微软在线语音服务，需服务器可访问 `speech.platform.bing.com`（国内多数服务器可直连）。
