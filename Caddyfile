@@ -1,0 +1,34 @@
+# book.xitie.xyz —— Caddy 反向代理配置
+#
+# 放置位置（Debian 官方源安装的 Caddy）：
+#   /etc/caddy/Caddyfile
+# 生效：
+#   sudo systemctl reload caddy
+#
+# 说明：
+#   · Caddy 会自动为域名申请并续期 Let's Encrypt 证书（需 80/443 可达）
+#   · 域名解析：为 book.xitie.xyz 添加 A 记录指向服务器公网 IP（海外无需备案）
+
+book.xitie.xyz {
+	encode zstd gzip
+
+	# 放开上传体积上限（txt/epub 一般不大，留足余量）
+	request_body {
+		max_size 60MB
+	}
+
+	reverse_proxy 127.0.0.1:8080
+
+	header {
+		X-Content-Type-Options nosniff
+		Referrer-Policy strict-origin-when-cross-origin
+		-Server
+	}
+
+	log {
+		output file /var/log/caddy/book-access.log {
+			roll_size 20mb
+			roll_keep 5
+		}
+	}
+}

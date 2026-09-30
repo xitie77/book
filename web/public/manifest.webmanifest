@@ -1,0 +1,12 @@
+{
+  "name": "夜读 · 小说阅读器",
+  "short_name": "夜读",
+  "description": "私有小说阅读器：上传 txt / epub，书架管理，点开即读。",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#f5f1e8",
+  "theme_color": "#f5f1e8",
+  "icons": [
+    { "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any" }
+  ]
+}

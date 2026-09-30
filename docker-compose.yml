@@ -1,0 +1,28 @@
+# 夜读 —— 小说阅读器部署
+# 用法：
+#   1) cp .env.example .env  并设置 ADMIN_PASSWORD
+#   2) docker compose up -d --build
+#   然后访问 http://localhost:8080
+services:
+  book:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: book
+    restart: unless-stopped
+    # 只监听本机，由 Caddy 反代对外（勿改成 0.0.0.0，除非不用反代）
+    ports:
+      - "127.0.0.1:8080:4000"
+    environment:
+      PORT: "4000"
+      # 单本文件上传上限（MB）
+      MAX_UPLOAD_MB: "${MAX_UPLOAD_MB:-50}"
+      # 首次启动（数据库为空）时自动创建的账号；密码从 .env 读取，勿写死
+      ADMIN_USERNAME: "${ADMIN_USERNAME:-wbx}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:?请在 .env 里设置 ADMIN_PASSWORD}"
+      ADMIN_NAME: "${ADMIN_NAME:-书友}"
+    volumes:
+      - book-data:/app/server/data
+
+volumes:
+  book-data:
