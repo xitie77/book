@@ -44,17 +44,17 @@ git clone <你的仓库地址> book && cd book
 > 先确认一下：
 >
 > ```bash
-> ss -tlnp | grep -E ':8080|:8081'
+> ss -tlnp | grep -E ':8080|:8002'
 > ```
 >
-> · 8080 空着 → 用默认；· 8080 被占 → 本次用 **8081**（下面命令已按 8081 写）。
+> · 8080 空着 → 用默认；· 8080 被占 → 改用 **8002**（下面命令已按 8002 写）。
 
 ```bash
 # 端口空闲时：
 ./deploy.sh
 
-# 8080 已被工作流占用时（推荐）：
-./deploy.sh --port 8081
+# 8080 已被其它服务占用时（本机实际情况）：
+./deploy.sh --port 8002
 ```
 
 脚本会：构建镜像 → 创建数据卷 → 启动容器 → 等待健康检查 → 打印地址。
@@ -64,7 +64,7 @@ git clone <你的仓库地址> book && cd book
 验证（端口按你选的替换）：
 
 ```bash
-curl http://127.0.0.1:8081/api/health
+curl http://127.0.0.1:8002/api/health
 # {"ok":true,"service":"book",...}
 ```
 
@@ -84,7 +84,7 @@ sudo cp /etc/caddy/Caddyfile /etc/caddy/Caddyfile.bak.$(date +%F)
 
 **2. 把下面这一段追加到 `/etc/caddy/Caddyfile` 末尾**
 
-（注意 `reverse_proxy` 的端口要和第二步一致：8080 或 8081）
+（注意 `reverse_proxy` 的端口要和第二步一致：8080 或 8002）
 
 ```bash
 sudo tee -a /etc/caddy/Caddyfile >/dev/null <<'EOF'
@@ -96,7 +96,7 @@ book.xitie.xyz {
 		max_size 60MB
 	}
 
-	reverse_proxy 127.0.0.1:8081
+	reverse_proxy 127.0.0.1:8002
 
 	header {
 		X-Content-Type-Options nosniff
@@ -210,7 +210,7 @@ docker compose up -d --force-recreate book   # 数据卷不变，数据保留
 本应用按「第X章/节/回」等标记切章；识别不到的会自动按约 6000 字分节。可在「目录」里核对。
 
 **Q：打不开 / 502？**
-`docker ps` 看容器是否在跑 → `curl http://127.0.0.1:8080/api/health` → `sudo journalctl -u caddy -n 50`。
+`docker ps` 看容器是否在跑 → `curl http://127.0.0.1:8002/api/health` → `sudo journalctl -u caddy -n 50`。
 
 **Q：删除书会删文件吗？**
 会。删书时同时清理磁盘上的原文件与封面，不留孤儿文件。
