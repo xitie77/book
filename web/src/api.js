@@ -30,7 +30,7 @@ export const api = {
     req(url, { method: "PATCH", headers: json, body: JSON.stringify(body) }),
   del: (url) => req(url, { method: "DELETE" }),
   /* 重新解析（从原始文件重新解码，修复乱码） */
-  reparse: (url) => req(url, { method: "POST", headers: json, body: "{}" }),
+  reparse: (id) => req(`/api/books/${id}/reparse`, { method: "POST", headers: json, body: "{}" }),
 
   /* 上传（FormData，不设 Content-Type，让浏览器带 boundary） */
   upload(url, formData, onProgress) {

@@ -372,7 +372,7 @@ export default function Reader() {
 
   const doReparse = useCallback(async () => {
     try {
-      await api.reparse(`/api/books/${id}`);
+      await api.reparse(id);
       cache.current.clear();
       await openChapter(chapterIdxRef.current, { page: 0, scrollTop: true });
     } catch (e) {
