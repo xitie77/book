@@ -22,6 +22,19 @@ function loadPref() {
   }
 }
 
+/* 隐藏模式：把正文替换成随机汉字（乱码），用来隐藏阅读内容；保留换行与空白 */
+function garbledText(s) {
+  let out = "";
+  for (const ch of s) {
+    if (ch === "\n" || /\s/.test(ch)) {
+      out += ch;
+      continue;
+    }
+    out += String.fromCodePoint(0x4e00 + Math.floor(Math.random() * (0x9fff - 0x4e00 + 1)));
+  }
+  return out;
+}
+
 export default function Reader() {
   const { id } = useParams();
   const nav = useNavigate();
@@ -42,6 +55,7 @@ export default function Reader() {
   const [mode, setMode] = useState(pref.mode || "paged"); // paged | scroll
   const [page, setPageState] = useState(0);
   const [pages, setPages] = useState(1);
+  const [hidden, setHidden] = useState(false); // 隐藏模式：正文显示为乱码
 
   /* 听书 */
   const [voice, setVoice] = useState(pref.voice || "zh-CN-XiaoxiaoNeural");
@@ -367,18 +381,8 @@ export default function Reader() {
     }
   };
 
-  /* 隐藏手势：三连点「章节名」触发重新解析（修复乱码）。无入口、无提示，不对外暴露 */
+  /* 隐藏手势：三连点「章节名」切换隐藏/显示。隐藏后正文显示为乱码，再点三下恢复。无入口、无提示 */
   const titleTripleRef = useRef([]);
-
-  const doReparse = useCallback(async () => {
-    try {
-      await api.reparse(id);
-      cache.current.clear();
-      await openChapter(chapterIdxRef.current, { page: 0, scrollTop: true });
-    } catch (e) {
-      toast(e.message || "重新解析失败");
-    }
-  }, [id, openChapter]);
 
   const onTitleClick = (e) => {
     e.stopPropagation();
@@ -388,7 +392,7 @@ export default function Reader() {
     if (times.length > 3) times.shift();
     if (times.length === 3 && now - times[0] < 650) {
       times.length = 0;
-      doReparse();
+      setHidden((v) => !v);
     }
   };
 
@@ -442,10 +446,12 @@ export default function Reader() {
     }
   };
 
-  const paragraphs = (chapter?.content || "")
+  const rawParagraphs = (chapter?.content || "")
     .split("\n")
     .map((s) => s.trim())
     .filter(Boolean);
+  const paragraphs = hidden ? rawParagraphs.map((p) => garbledText(p)) : rawParagraphs;
+  const displayTitle = hidden ? garbledText(chapter?.title || "") : chapter?.title;
 
   const th = READER_THEMES[theme];
 
@@ -487,7 +493,7 @@ export default function Reader() {
             <div className="spin" />
           ) : (
             <div className="paged-track" ref={pagedTrackRef}>
-              <h1 className="chapter-title" onClick={onTitleClick}>{chapter?.title}</h1>
+              <h1 className="chapter-title" onClick={onTitleClick}>{displayTitle}</h1>
               {paragraphs.map((p, i) => (
                 <p key={i}>{p}</p>
               ))}
@@ -509,7 +515,7 @@ export default function Reader() {
             <div className="spin" />
           ) : (
             <>
-              <h1 className="chapter-title" onClick={onTitleClick}>{chapter?.title}</h1>
+              <h1 className="chapter-title" onClick={onTitleClick}>{displayTitle}</h1>
               <div
                 className="chapter-text"
                 style={{ "--read-size": fontSize + "px", "--read-leading": leading }}
