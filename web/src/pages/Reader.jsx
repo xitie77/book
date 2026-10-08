@@ -22,18 +22,26 @@ function loadPref() {
   }
 }
 
-/* 隐藏模式：把正文替换成随机汉字（乱码），用来隐藏阅读内容；保留换行与空白 */
-function garbledText(s) {
+/* 加密：把每个汉字按固定偏移在 CJK 范围内平移（可逆的凯撒式加密）。
+   加密后是乱码，再按相反偏移解密即还原。用于「瞬间隐藏阅读内容」。 */
+const CJK_RANGE = 0x9fff - 0x4e00 + 1;
+const ENC_KEY = 0x3a1b;
+
+function shiftCJK(text, key) {
   let out = "";
-  for (const ch of s) {
-    if (ch === "\n" || /\s/.test(ch)) {
+  for (const ch of text) {
+    const c = ch.codePointAt(0);
+    if (c >= 0x4e00 && c <= 0x9fff) {
+      out += String.fromCodePoint(0x4e00 + ((((c - 0x4e00 + key) % CJK_RANGE) + CJK_RANGE) % CJK_RANGE));
+    } else {
       out += ch;
-      continue;
     }
-    out += String.fromCodePoint(0x4e00 + Math.floor(Math.random() * (0x9fff - 0x4e00 + 1)));
   }
   return out;
 }
+
+const encryptText = (s) => shiftCJK(s, ENC_KEY);
+const decryptText = (s) => shiftCJK(s, -ENC_KEY);
 
 export default function Reader() {
   const { id } = useParams();
@@ -450,8 +458,8 @@ export default function Reader() {
     .split("\n")
     .map((s) => s.trim())
     .filter(Boolean);
-  const paragraphs = hidden ? rawParagraphs.map((p) => garbledText(p)) : rawParagraphs;
-  const displayTitle = hidden ? garbledText(chapter?.title || "") : chapter?.title;
+  const paragraphs = hidden ? rawParagraphs.map((p) => encryptText(p)) : rawParagraphs;
+  const displayTitle = hidden ? encryptText(chapter?.title || "") : chapter?.title;
 
   const th = READER_THEMES[theme];
 
