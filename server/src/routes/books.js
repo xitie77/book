@@ -256,6 +256,55 @@ export default async function bookRoutes(app) {
     return { ok: true };
   });
 
+  /* ---------- 重新解析：从原始文件重新解码、重建章节（修复乱码） ---------- */
+  app.post("/api/books/:id/reparse", { preHandler: requireAuth }, async (request, reply) => {
+    const book = ownedBook(request.params.id, request.user.id);
+    if (!book) return reply.code(404).send({ error: "书不存在" });
+    if (!book.file_path || !fs.existsSync(book.file_path)) {
+      return reply.code(410).send({ error: "原始文件已丢失，请删除后重新上传" });
+    }
+
+    const buf = fs.readFileSync(book.file_path);
+    let parsed;
+    try {
+      if (book.kind === "epub") {
+        const e = parseEpub(buf);
+        parsed = { title: e.title, author: e.author, chapters: e.chapters };
+      } else {
+        const text = decodeBuffer(buf);
+        const meta = guessMeta(text, book.title);
+        parsed = { title: meta.title, author: meta.author, chapters: splitChapters(text) };
+      }
+    } catch (err) {
+      return reply.code(400).send({ error: "解析失败：" + (err?.message || "文件损坏") });
+    }
+    if (!parsed.chapters.length) {
+      return reply.code(400).send({ error: "解析结果为空" });
+    }
+
+    const charCount = parsed.chapters.reduce((n, c) => n + c.content.length, 0);
+    db.exec("BEGIN");
+    try {
+      db.prepare("DELETE FROM chapters WHERE book_id = ?").run(book.id);
+      const ins = db.prepare(
+        "INSERT INTO chapters (book_id, idx, title, content, char_count) VALUES (?, ?, ?, ?, ?)"
+      );
+      parsed.chapters.forEach((c, i) => {
+        ins.run(book.id, i + 1, c.title || `第 ${i + 1} 节`, c.content, c.content.length);
+      });
+      db.prepare(
+        "UPDATE books SET title = COALESCE(?, title), author = COALESCE(?, author), char_count = ?, updated_at = datetime('now','localtime') WHERE id = ?"
+      ).run(parsed.title || null, parsed.author || null, charCount, book.id);
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      request.log.error(err);
+      return reply.code(500).send({ error: "重建章节失败" });
+    }
+
+    return { ok: true, title: parsed.title || book.title, chapterCount: parsed.chapters.length, charCount };
+  });
+
   /* ---------- 阅读进度 ---------- */
   app.put("/api/books/:id/progress", { preHandler: requireAuth }, async (request, reply) => {
     const book = ownedBook(request.params.id, request.user.id);
