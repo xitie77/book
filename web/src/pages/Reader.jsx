@@ -12,6 +12,8 @@ const READER_THEMES = {
   night: { bg: "#14161c", text: "#c6cad4" },
 };
 
+const PAGE_GAP = 40; // 翻页模式下两栏之间的间距（px）
+
 function loadPref() {
   try {
     return JSON.parse(localStorage.getItem("book-reader-pref")) || {};
@@ -37,6 +39,9 @@ export default function Reader() {
   const [theme, setTheme] = useState(pref.theme || "paper");
   const [fontSize, setFontSize] = useState(pref.fontSize || 19);
   const [leading, setLeading] = useState(pref.leading || 1.9);
+  const [mode, setMode] = useState(pref.mode || "paged"); // paged | scroll
+  const [page, setPageState] = useState(0);
+  const [pages, setPages] = useState(1);
 
   /* 听书 */
   const [voice, setVoice] = useState(pref.voice || "zh-CN-XiaoxiaoNeural");
@@ -47,47 +52,102 @@ export default function Reader() {
   const ttsRef = useRef(null);        // 上次收听位置（来自接口）
   const startedRef = useRef(false);   // 本次阅读是否已启动听书
   const curChapterRef = useRef(null); // 当前正文章号
+  const chapterIdxRef = useRef(1);    // 当前章号（供翻页进度回传用）
 
   const scrollRef = useRef(0);
-  const restoreRef = useRef(null); // 待恢复的滚动比例
+  const restoreRef = useRef(null); // 待恢复的「章节内进度比例」(0~1)，翻页/滚动共用
   const cache = useRef(new Map()); // idx -> chapter 数据
   const saveTimer = useRef(null);
+
+  const pageRef = useRef(0);
+  const pagesRef = useRef(1);
+  const pagedViewportRef = useRef(null);
+  const pagedTrackRef = useRef(null);
+  const measuredRef = useRef({ step: 0 });
+  const pendingPageRef = useRef(undefined); // number | "end" | "restore"
+  const justLeftPagedRef = useRef(false);
 
   /* 保存偏好 */
   useEffect(() => {
     localStorage.setItem(
       "book-reader-pref",
-      JSON.stringify({ theme, fontSize, leading, voice, rate, pitch })
+      JSON.stringify({ theme, fontSize, leading, voice, rate, pitch, mode })
     );
-  }, [theme, fontSize, leading, voice, rate, pitch]);
+  }, [theme, fontSize, leading, voice, rate, pitch, mode]);
 
-  /* 初始加载：书信息 + 目录 + 进度 */
-  useEffect(() => {
-    let alive = true;
-    (async () => {
-      try {
-        const d = await api.get(`/api/books/${id}`);
-        if (!alive) return;
-        setBook(d.book);
-        setChapters(d.chapters);
-        setTotal(d.chapters.length);
-        const startIdx = d.progress?.chapterIdx || d.chapters[0]?.idx || 1;
-        restoreRef.current = d.progress?.chapterIdx === startIdx ? d.progress.scrollPct : 0;
-        ttsRef.current = d.ttsProgress || null;
-        await openChapter(startIdx, false);
-      } catch (e) {
-        toast(e.message || "加载失败");
-        nav("/", { replace: true });
-      }
-    })();
-    return () => {
-      alive = false;
-    };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [id]);
+  /* ---------- 翻页：测量与定位 ---------- */
+  const measurePaged = useCallback(() => {
+    const vp = pagedViewportRef.current;
+    const track = pagedTrackRef.current;
+    if (!vp || !track) return;
+    const cs = getComputedStyle(vp);
+    const W = vp.clientWidth - parseFloat(cs.paddingLeft) - parseFloat(cs.paddingRight);
+    const H = vp.clientHeight - parseFloat(cs.paddingTop) - parseFloat(cs.paddingBottom);
+    if (W <= 0 || H <= 0) return;
+
+    track.classList.add("no-anim");
+    track.style.width = W + "px";
+    track.style.columnWidth = W + "px";
+    track.style.height = H + "px";
+    void track.offsetHeight; // 强制完成分栏
+    const totalW = track.scrollWidth;
+    const newPages = Math.max(1, Math.round((totalW + PAGE_GAP) / (W + PAGE_GAP)));
+    const step = W + PAGE_GAP;
+    measuredRef.current = { step };
+    pagesRef.current = newPages;
+    setPages(newPages);
+
+    const pend = pendingPageRef.current;
+    pendingPageRef.current = undefined;
+    let target;
+    if (pend === "end") target = newPages - 1;
+    else if (pend === "restore") {
+      const pct = restoreRef.current ?? 0;
+      restoreRef.current = null;
+      target = Math.round(pct * (newPages - 1));
+    } else if (typeof pend === "number") target = pend;
+    else target = pageRef.current;
+
+    target = Math.max(0, Math.min(newPages - 1, target));
+    pageRef.current = target;
+    setPageState(target);
+    track.style.transform = `translateX(${-target * step}px)`;
+    requestAnimationFrame(() =>
+      requestAnimationFrame(() => track.classList.remove("no-anim"))
+    );
+  }, []);
+
+  const saveChapterProgress = useCallback(
+    (pct) => {
+      const cidx = chapterIdxRef.current;
+      if (!cidx) return;
+      api
+        .put(`/api/books/${id}/progress`, {
+          chapterIdx: cidx,
+          scrollPct: Number((pct || 0).toFixed(4)),
+        })
+        .catch(() => {});
+    },
+    [id]
+  );
+
+  const setPage = useCallback(
+    (p) => {
+      const track = pagedTrackRef.current;
+      const { step } = measuredRef.current;
+      const n = pagesRef.current;
+      if (!track || !step) return;
+      const clamped = Math.max(0, Math.min(n - 1, p));
+      pageRef.current = clamped;
+      setPageState(clamped);
+      track.style.transform = `translateX(${-clamped * step}px)`;
+      saveChapterProgress(n > 1 ? clamped / (n - 1) : 0);
+    },
+    [saveChapterProgress]
+  );
 
   const openChapter = useCallback(
-    async (idx, scrollTop = true) => {
+    async (idx, opts = {}) => {
       setLoading(true);
       try {
         let data = cache.current.get(idx);
@@ -97,20 +157,29 @@ export default function Reader() {
         }
         setChapter(data.chapter);
         curChapterRef.current = data.chapter.idx;
+        chapterIdxRef.current = data.chapter.idx;
         setPrevIdx(data.prevIdx);
         setNextIdx(data.nextIdx);
         setTotal(data.total);
         setLoading(false);
-        requestAnimationFrame(() => {
-          if (scrollTop) window.scrollTo(0, 0);
-          else if (restoreRef.current != null) {
-            const pct = restoreRef.current;
-            restoreRef.current = null;
-            const max = document.body.scrollHeight - window.innerHeight;
-            window.scrollTo(0, max * pct);
-          }
-        });
-        // 预取下一章，翻页更顺
+
+        if (mode === "paged") {
+          if (opts.toEnd) pendingPageRef.current = "end";
+          else if (opts.page != null) pendingPageRef.current = opts.page;
+          else if (restoreRef.current != null) pendingPageRef.current = "restore";
+          else pendingPageRef.current = 0;
+        } else {
+          requestAnimationFrame(() => {
+            if (opts.scrollTop) window.scrollTo(0, 0);
+            else if (restoreRef.current != null) {
+              const pct = restoreRef.current;
+              restoreRef.current = null;
+              const max = document.body.scrollHeight - window.innerHeight;
+              window.scrollTo(0, max * pct);
+            }
+          });
+        }
+
         if (data.nextIdx) {
           api
             .get(`/api/books/${id}/chapters/${data.nextIdx}`)
@@ -122,8 +191,27 @@ export default function Reader() {
         toast(e.message || "章节加载失败");
       }
     },
-    [id]
+    [id, mode]
   );
+
+  const go = useCallback(
+    (idx, opts = {}) => {
+      setShowTools(false);
+      setShowToc(false);
+      openChapter(idx, { page: 0, scrollTop: true, ...opts });
+    },
+    [openChapter]
+  );
+
+  const goNextPage = useCallback(() => {
+    if (pageRef.current < pagesRef.current - 1) return setPage(pageRef.current + 1);
+    if (nextIdx != null) openChapter(nextIdx, { page: 0 });
+  }, [setPage, nextIdx, openChapter]);
+
+  const goPrevPage = useCallback(() => {
+    if (pageRef.current > 0) return setPage(pageRef.current - 1);
+    if (prevIdx != null) openChapter(prevIdx, { toEnd: true });
+  }, [setPage, prevIdx, openChapter]);
 
   /* ---------- 听书播放器 ---------- */
   const player = usePlayer({
@@ -139,7 +227,7 @@ export default function Reader() {
       setListenMeta({ title, chapterIdx });
       // 朗读推进到新章节时，正文跟着翻过去
       if (curChapterRef.current != null && curChapterRef.current !== chapterIdx) {
-        openChapter(chapterIdx, true);
+        openChapter(chapterIdx, { page: 0, scrollTop: true });
       }
     },
   });
@@ -158,21 +246,75 @@ export default function Reader() {
     setShowPlayer((v) => !v);
   };
 
-  /* 滚动保存进度（节流） */
+  /* ---------- 初始加载 ---------- */
   useEffect(() => {
-    if (!chapter) return;
+    let alive = true;
+    (async () => {
+      try {
+        const d = await api.get(`/api/books/${id}`);
+        if (!alive) return;
+        setBook(d.book);
+        setChapters(d.chapters);
+        setTotal(d.chapters.length);
+        const startIdx = d.progress?.chapterIdx || d.chapters[0]?.idx || 1;
+        restoreRef.current = d.progress?.chapterIdx === startIdx ? d.progress.scrollPct || 0 : 0;
+        ttsRef.current = d.ttsProgress || null;
+        await openChapter(startIdx, {});
+      } catch (e) {
+        toast(e.message || "加载失败");
+        nav("/", { replace: true });
+      }
+    })();
+    return () => {
+      alive = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [id]);
+
+  /* 章节 / 字号 / 行距 / 模式 变化时（重新）分页 */
+  useEffect(() => {
+    if (mode !== "paged" || !chapter) return;
+    const raf = requestAnimationFrame(() => measurePaged());
+    return () => cancelAnimationFrame(raf);
+  }, [chapter, mode, fontSize, leading, measurePaged]);
+
+  /* 转屏 / 缩放 / 字体加载完成 → 重分页 */
+  useEffect(() => {
+    if (mode !== "paged") return;
+    const onResize = () => measurePaged();
+    window.addEventListener("resize", onResize);
+    window.addEventListener("orientationchange", onResize);
+    if (document.fonts?.ready?.then) {
+      document.fonts.ready.then(() => measurePaged()).catch(() => {});
+    }
+    return () => {
+      window.removeEventListener("resize", onResize);
+      window.removeEventListener("orientationchange", onResize);
+    };
+  }, [mode, measurePaged]);
+
+  /* 从翻页切回滚动时，把滚动位置定位到当前页比例 */
+  useEffect(() => {
+    if (mode === "scroll" && chapter && justLeftPagedRef.current) {
+      justLeftPagedRef.current = false;
+      const frac = pages > 1 ? page / (pages - 1) : 0;
+      requestAnimationFrame(() => {
+        const max = document.body.scrollHeight - window.innerHeight;
+        window.scrollTo(0, frac * max);
+      });
+    }
+  }, [mode, chapter, page, pages]);
+
+  /* 滚动模式：保存进度（节流） */
+  useEffect(() => {
+    if (mode !== "scroll" || !chapter) return;
     const onScroll = () => {
       const max = document.body.scrollHeight - window.innerHeight;
       scrollRef.current = max > 0 ? window.scrollY / max : 0;
       if (saveTimer.current) return;
       saveTimer.current = setTimeout(() => {
         saveTimer.current = null;
-        api
-          .put(`/api/books/${id}/progress`, {
-            chapterIdx: chapter.idx,
-            scrollPct: Number(scrollRef.current.toFixed(4)),
-          })
-          .catch(() => {});
+        saveChapterProgress(scrollRef.current);
       }, 1500);
     };
     window.addEventListener("scroll", onScroll, { passive: true });
@@ -181,28 +323,29 @@ export default function Reader() {
       if (saveTimer.current) {
         clearTimeout(saveTimer.current);
         saveTimer.current = null;
-        api
-          .put(`/api/books/${id}/progress`, {
-            chapterIdx: chapter.idx,
-            scrollPct: Number(scrollRef.current.toFixed(4)),
-          })
-          .catch(() => {});
+        saveChapterProgress(scrollRef.current);
       }
     };
-  }, [chapter, id]);
+  }, [mode, chapter, id, saveChapterProgress]);
 
   /* 键盘翻页 */
   useEffect(() => {
     const onKey = (e) => {
-      if (e.key === "ArrowRight" || e.key === "PageDown") nextIdx && go(nextIdx);
-      if (e.key === "ArrowLeft" || e.key === "PageUp") prevIdx && go(prevIdx);
+      if (e.key === "ArrowRight" || e.key === "PageDown" || e.key === " ") {
+        e.preventDefault();
+        if (mode === "paged") goNextPage();
+        else if (nextIdx) go(nextIdx);
+      } else if (e.key === "ArrowLeft" || e.key === "PageUp") {
+        e.preventDefault();
+        if (mode === "paged") goPrevPage();
+        else if (prevIdx) go(prevIdx);
+      }
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [prevIdx, nextIdx]);
+  }, [mode, prevIdx, nextIdx, goNextPage, goPrevPage, go]);
 
-  /* 滑动翻页 */
+  /* 滑动翻页 / 切章 */
   const touch = useRef({ x: 0, y: 0, t: 0 });
   const onTouchStart = (e) => {
     const t = e.changedTouches[0];
@@ -214,21 +357,58 @@ export default function Reader() {
     const dy = t.clientY - touch.current.y;
     const dt = Date.now() - touch.current.t;
     if (Math.abs(dx) > 70 && Math.abs(dx) > Math.abs(dy) * 1.6 && dt < 600) {
-      if (dx < 0 && nextIdx) go(nextIdx);
-      else if (dx > 0 && prevIdx) go(prevIdx);
+      if (mode === "paged") {
+        if (dx < 0) goNextPage();
+        else goPrevPage();
+      } else {
+        if (dx < 0 && nextIdx) go(nextIdx);
+        else if (dx > 0 && prevIdx) go(prevIdx);
+      }
     }
   };
 
-  const go = (idx) => {
-    setShowTools(false);
-    openChapter(idx, true);
+  const onPagedClick = (e) => {
+    if (e.target.closest("a,button")) return;
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const w = rect.width;
+    if (x < w * 0.3) goPrevPage();
+    else if (x > w * 0.7) goNextPage();
+    else {
+      setShowTools((v) => !v);
+      setShowToc(false);
+    }
+  };
+
+  const onScrollClick = (e) => {
+    if (e.target.closest("a,button")) return;
+    setShowTools((v) => !v);
+    setShowToc(false);
+  };
+
+  const setModeAndApply = (m) => {
+    if (m === mode) return;
+    if (m === "paged") {
+      restoreRef.current = scrollRef.current || 0;
+      pendingPageRef.current = "restore";
+      setMode("paged");
+    } else {
+      justLeftPagedRef.current = true;
+      setMode("scroll");
+    }
   };
 
   const addBookmark = async () => {
     try {
+      const frac =
+        mode === "paged"
+          ? pages > 1
+            ? page / (pages - 1)
+            : 0
+          : scrollRef.current || 0;
       await api.post(`/api/books/${id}/bookmarks`, {
         chapterIdx: chapter.idx,
-        scrollPct: Number(scrollRef.current.toFixed(4)),
+        scrollPct: Number(frac.toFixed(4)),
         snippet: (chapter.content || "").slice(0, 60),
       });
       toast("已加书签");
@@ -269,46 +449,74 @@ export default function Reader() {
         </div>
       </div>
 
-      {/* 正文 */}
-      <div
-        className="reader-body"
-        onTouchStart={onTouchStart}
-        onTouchEnd={onTouchEnd}
-        onClick={(e) => {
-          // 点正文中部切换工具栏，点链接/按钮不触发
-          if (e.target.closest("a,button")) return;
-          setShowTools((v) => !v);
-          setShowToc(false);
-        }}
-      >
-        {loading && !chapter ? (
-          <div className="spin" />
-        ) : (
-          <>
-            <h1 className="chapter-title">{chapter?.title}</h1>
-            <div
-              className="chapter-text"
-              style={{ "--read-size": fontSize + "px", "--read-leading": leading }}
-            >
+      {/* 正文：翻页模式 */}
+      {mode === "paged" ? (
+        <div
+          className="paged-viewport"
+          ref={pagedViewportRef}
+          onClick={onPagedClick}
+          onTouchStart={onTouchStart}
+          onTouchEnd={onTouchEnd}
+        >
+          {loading && !chapter ? (
+            <div className="spin" />
+          ) : (
+            <div className="paged-track" ref={pagedTrackRef}>
+              <h1 className="chapter-title">{chapter?.title}</h1>
               {paragraphs.map((p, i) => (
                 <p key={i}>{p}</p>
               ))}
             </div>
-          </>
-        )}
-
-        <div className="reader-foot">
-          <button className="btn ghost" disabled={!prevIdx} onClick={() => prevIdx && go(prevIdx)}>
-            上一章
-          </button>
-          <button className="btn" disabled={!nextIdx} onClick={() => nextIdx && go(nextIdx)}>
-            下一章
-          </button>
+          )}
+          <div className="paged-indicator">
+            {page + 1} / {pages}
+          </div>
         </div>
-      </div>
+      ) : (
+        /* 正文：滚动模式 */
+        <div
+          className="reader-body"
+          onTouchStart={onTouchStart}
+          onTouchEnd={onTouchEnd}
+          onClick={onScrollClick}
+        >
+          {loading && !chapter ? (
+            <div className="spin" />
+          ) : (
+            <>
+              <h1 className="chapter-title">{chapter?.title}</h1>
+              <div
+                className="chapter-text"
+                style={{ "--read-size": fontSize + "px", "--read-leading": leading }}
+              >
+                {paragraphs.map((p, i) => (
+                  <p key={i}>{p}</p>
+                ))}
+              </div>
+            </>
+          )}
+
+          <div className="reader-foot">
+            <button className="btn ghost" disabled={!prevIdx} onClick={() => prevIdx && go(prevIdx)}>
+              上一章
+            </button>
+            <button className="btn" disabled={!nextIdx} onClick={() => nextIdx && go(nextIdx)}>
+              下一章
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* 底部工具条 */}
       <div className={"reader-tools" + (showTools ? " show" : "")}>
+        <div className="seg" style={{ marginBottom: 14 }}>
+          <button className={mode === "paged" ? "on" : ""} onClick={() => setModeAndApply("paged")}>
+            📖 翻页
+          </button>
+          <button className={mode === "scroll" ? "on" : ""} onClick={() => setModeAndApply("scroll")}>
+            📜 滚动
+          </button>
+        </div>
         <button className="btn" style={{ width: "100%", marginBottom: 14 }} onClick={onListenClick}>
           🎧 听这本书
         </button>
