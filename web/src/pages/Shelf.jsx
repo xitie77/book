@@ -65,17 +65,6 @@ export default function Shelf() {
     load();
   };
 
-  const reparseBook = async (b) => {
-    try {
-      const r = await api.reparse(`/api/books/${b.id}`);
-      toast(`已重新解析（${r.chapterCount} 章）`);
-      setMenu(null);
-      load();
-    } catch (e) {
-      toast(e.message || "重新解析失败");
-    }
-  };
-
   const saveRename = async () => {
     await api.patch(`/api/books/${renaming.id}`, { title: renameVal });
     toast("已重命名");
@@ -219,9 +208,6 @@ export default function Shelf() {
               }}
             >
               ✏️ 重命名
-            </button>
-            <button className="menu-item" onClick={() => reparseBook(menu)}>
-              🔄 重新解析（修复乱码）
             </button>
             <button className="menu-item" style={{ color: "#c0392b" }} onClick={() => del(menu)}>
               🗑 删除

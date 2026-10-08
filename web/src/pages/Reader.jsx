@@ -367,36 +367,33 @@ export default function Reader() {
     }
   };
 
-  const tripleRef = useRef({ times: [] });
+  /* 隐藏手势：三连点「章节名」触发重新解析（修复乱码）。无入口、无提示，不对外暴露 */
+  const titleTripleRef = useRef([]);
 
   const doReparse = useCallback(async () => {
     try {
-      toast("正在重新解析…");
       await api.reparse(`/api/books/${id}`);
       cache.current.clear();
       await openChapter(chapterIdxRef.current, { page: 0, scrollTop: true });
-      toast("已修复，重新解析完成");
     } catch (e) {
       toast(e.message || "重新解析失败");
     }
   }, [id, openChapter]);
 
-  /* 三连点/三连击 = 重新解析（修复乱码）；单点仍走原逻辑 */
-  const trackTriple = (single) => (e) => {
-    if (e.target.closest("a,button")) return;
+  const onTitleClick = (e) => {
+    e.stopPropagation();
     const now = Date.now();
-    const times = tripleRef.current.times;
+    const times = titleTripleRef.current;
     times.push(now);
     if (times.length > 3) times.shift();
     if (times.length === 3 && now - times[0] < 650) {
       times.length = 0;
       doReparse();
-      return;
     }
-    single(e);
   };
 
-  const onPagedClick = trackTriple((e) => {
+  const onPagedClick = (e) => {
+    if (e.target.closest("a,button")) return;
     const rect = e.currentTarget.getBoundingClientRect();
     const x = e.clientX - rect.left;
     const w = rect.width;
@@ -406,12 +403,13 @@ export default function Reader() {
       setShowTools((v) => !v);
       setShowToc(false);
     }
-  });
+  };
 
-  const onScrollClick = trackTriple(() => {
+  const onScrollClick = (e) => {
+    if (e.target.closest("a,button")) return;
     setShowTools((v) => !v);
     setShowToc(false);
-  });
+  };
 
   const setModeAndApply = (m) => {
     if (m === mode) return;
@@ -489,7 +487,7 @@ export default function Reader() {
             <div className="spin" />
           ) : (
             <div className="paged-track" ref={pagedTrackRef}>
-              <h1 className="chapter-title">{chapter?.title}</h1>
+              <h1 className="chapter-title" onClick={onTitleClick}>{chapter?.title}</h1>
               {paragraphs.map((p, i) => (
                 <p key={i}>{p}</p>
               ))}
@@ -511,7 +509,7 @@ export default function Reader() {
             <div className="spin" />
           ) : (
             <>
-              <h1 className="chapter-title">{chapter?.title}</h1>
+              <h1 className="chapter-title" onClick={onTitleClick}>{chapter?.title}</h1>
               <div
                 className="chapter-text"
                 style={{ "--read-size": fontSize + "px", "--read-leading": leading }}
@@ -597,10 +595,6 @@ export default function Reader() {
             下一章
           </button>
         </div>
-
-        <button className="btn ghost" style={{ width: "100%", marginTop: 10 }} onClick={doReparse}>
-          🔄 重新解析（修复乱码）
-        </button>
       </div>
 
       {/* 目录抽屉 */}
